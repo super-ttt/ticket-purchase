@@ -6,6 +6,7 @@ __Description__ = "大麦app抢票自动化 - 优化版"
 __Created__ = 2025/09/13 19:27
 """
 
+import os
 import time
 from appium import webdriver
 from appium.options.common.base import AppiumOptions
@@ -25,12 +26,23 @@ class DamaiBot:
         self.wait = None
         self._setup_driver()
 
+    def _safe_quit_driver(self):
+        """安全关闭 driver，避免 InvalidSessionIdException 中断流程"""
+        if not self.driver:
+            return
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
+        finally:
+            self.driver = None
+            self.wait = None
+
     def _setup_driver(self):
         """初始化驱动配置"""
         capabilities = {
             "platformName": "Android",  # 操作系统
-            "platformVersion": "16",  # 系统版本
-            "deviceName": "emulator-5554",  # 设备名称
+            "deviceName": "Android",  # 通用设备名（避免写死 emulator）
             "appPackage": "cn.damai",  # app 包名
             "appActivity": ".launcher.splash.SplashMainActivity",  # app 启动 Activity
             "unicodeKeyboard": True,  # 支持 Unicode 输入
@@ -47,6 +59,13 @@ class DamaiBot:
             "adbExecTimeout": 20000,
         }
 
+        # 可选：通过环境变量精确指定设备/系统版本（不设置则自动匹配当前可用设备）
+        if os.getenv("ANDROID_UDID"):
+            capabilities["udid"] = os.getenv("ANDROID_UDID")
+            capabilities["deviceName"] = os.getenv("ANDROID_UDID")
+        if os.getenv("ANDROID_PLATFORM_VERSION"):
+            capabilities["platformVersion"] = os.getenv("ANDROID_PLATFORM_VERSION")
+
         device_app_info = AppiumOptions()
         device_app_info.load_capabilities(capabilities)
         self.driver = webdriver.Remote(self.config.server_url, options=device_app_info)
@@ -62,11 +81,12 @@ class DamaiBot:
             "enableNotificationListener": False,  # 禁用通知监听
         })
 
-        # 极短的显式等待，抢票场景下速度优先
-        self.wait = WebDriverWait(self.driver, 2)  # 从5秒减少到2秒
+        # 显式等待时长（可配置）
+        self.wait = WebDriverWait(self.driver, self.config.default_wait_sec)
 
-    def ultra_fast_click(self, by, value, timeout=1.5):
+    def ultra_fast_click(self, by, value, timeout=None):
         """超快速点击 - 适合抢票场景"""
+        timeout = self.config.fast_click_timeout_sec if timeout is None else timeout
         try:
             # 直接查找并点击，不等待可点击状态
             el = WebDriverWait(self.driver, timeout).until(
@@ -94,38 +114,51 @@ class DamaiBot:
             else:
                 print(f"点击失败: {value}")
 
-    def ultra_batch_click(self, elements_info, timeout=2):
-        """超快批量点击 - 带等待机制"""
-        coordinates = []
-        # 批量收集坐标，带超时等待
-        for by, value in elements_info:
+    def ultra_batch_click(self, users, timeout=None):
+        """批量选择用户：仅当前页面匹配（不滚动）；返回成功选中人数"""
+        timeout = self.config.user_find_timeout_sec if timeout is None else timeout
+        selected = 0
+
+        for user in users:
+            el = None
+            exact_selector = f'new UiSelector().text("{user}")'
+            fuzzy_selector = f'new UiSelector().textContains("{user}")'
+
+            # 1) 先尝试精确匹配
             try:
-                # 等待元素出现
                 el = WebDriverWait(self.driver, timeout).until(
-                    EC.presence_of_element_located((by, value))
+                    EC.presence_of_element_located((AppiumBy.ANDROID_UIAUTOMATOR, exact_selector))
                 )
+            except TimeoutException:
+                # 2) 再尝试模糊匹配
+                try:
+                    el = WebDriverWait(self.driver, self.config.user_fuzzy_timeout_sec).until(
+                        EC.presence_of_element_located((AppiumBy.ANDROID_UIAUTOMATOR, fuzzy_selector))
+                    )
+                except TimeoutException:
+                    pass
+
+            if el is None:
+                print(f"超时未找到用户: {user}")
+                continue
+
+            try:
                 rect = el.rect
                 x = rect['x'] + rect['width'] // 2
                 y = rect['y'] + rect['height'] // 2
-                coordinates.append((x, y, value))
-            except TimeoutException:
-                print(f"超时未找到用户: {value}")
+                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 30})
+                selected += 1
+                print(f"点击用户: {user}")
+                time.sleep(self.config.batch_click_delay_sec)
             except Exception as e:
-                print(f"查找用户失败 {value}: {e}")
-        print(f"成功找到 {len(coordinates)} 个用户")
-        # 快速连续点击
-        for i, (x, y, value) in enumerate(coordinates):
-            self.driver.execute_script("mobile: clickGesture", {
-                "x": x,
-                "y": y,
-                "duration": 30
-            })
-            if i < len(coordinates) - 1:
-                time.sleep(0.01)
-            print(f"点击用户: {value}")
+                print(f"点击用户失败 {user}: {e}")
 
-    def smart_wait_and_click(self, by, value, backup_selectors=None, timeout=1.5):
+        print(f"成功选中 {selected}/{len(users)} 个用户")
+        return selected
+
+    def smart_wait_and_click(self, by, value, backup_selectors=None, timeout=None):
         """智能等待和点击 - 支持备用选择器"""
+        timeout = self.config.smart_click_timeout_sec if timeout is None else timeout
         selectors = [(by, value)]
         if backup_selectors:
             selectors.extend(backup_selectors)
@@ -150,16 +183,19 @@ class DamaiBot:
             print("开始抢票流程...")
             start_time = time.time()
 
-            # 1. 城市选择 - 准备多个备选方案
-            print("选择城市...")
-            city_selectors = [
-                (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{self.config.city}")'),
-                (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().textContains("{self.config.city}")'),
-                (By.XPATH, f'//*[@text="{self.config.city}"]')
-            ]
-            if not self.smart_wait_and_click(*city_selectors[0], city_selectors[1:]):
-                print("城市选择失败")
-                return False
+            # 1. 城市选择（可选跳过）
+            if self.config.skip_city_selection:
+                print("选择城市...（已配置跳过）")
+            else:
+                print("选择城市...")
+                city_selectors = [
+                    (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{self.config.city}")'),
+                    (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().textContains("{self.config.city}")'),
+                    (By.XPATH, f'//*[@text="{self.config.city}"]')
+                ]
+                if not self.smart_wait_and_click(*city_selectors[0], city_selectors[1:]):
+                    print("城市选择失败")
+                    return False
 
             # 2. 点击预约按钮 - 多种可能的按钮文本
             print("点击预约按钮...")
@@ -172,35 +208,33 @@ class DamaiBot:
                 print("预约按钮点击失败")
                 return False
 
-            # 3. 票价选择 - 优化查找逻辑
+            # 3. 票价选择（优先直点，失败后兜底）
             print("选择票价...")
             try:
-                # 直接尝试点击，不等待容器，实际每次都失败，只能等待
-                price_container = self.driver.find_element(By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout')
-                # price_container = self.wait.until(  # 等待找到容器
-                #     EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout')))
-                # 在容器内找 index=1 且 clickable="true" 的 FrameLayout【因为799元的票价是排在第二的，但是page里text是空的被隐藏了】
+                # 极速路径：短超时等待容器，命中后按 index 直点
+                price_container = WebDriverWait(self.driver, self.config.price_fast_timeout_sec).until(
+                    EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout'))
+                )
                 target_price = price_container.find_element(
                     AppiumBy.ANDROID_UIAUTOMATOR,
                     f'new UiSelector().className("android.widget.FrameLayout").index({self.config.price_index}).clickable(true)'
                 )
                 self.driver.execute_script('mobile: clickGesture', {'elementId': target_price.id})
             except Exception as e:
-                print(f"票价选择失败，启动备用方案: {e}")
-                # 备用方案
-                # 先找到大容器
-                price_container = self.wait.until(
-                    EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout')))
-                # 在容器内找 index=1 且 clickable="true" 的 FrameLayout【因为799元的票价是排在第二的，但是page里text是空的被隐藏了】
-                target_price = price_container.find_element(
-                    AppiumBy.ANDROID_UIAUTOMATOR,
-                    f'new UiSelector().className("android.widget.FrameLayout").index({self.config.price_index}).clickable(true)'
-                )
-                self.driver.execute_script('mobile: clickGesture', {'elementId': target_price.id})
-
-                # if not self.ultra_fast_click(AppiumBy.ANDROID_UIAUTOMATOR,
-                #                              'new UiSelector().textMatches(".*799.*|.*\\d+元.*")'):
-                #     return False
+                print(f"票价直点失败，启动兜底方案: {e}")
+                # 兜底路径：更长等待再重试一次
+                try:
+                    price_container = WebDriverWait(self.driver, self.config.price_fallback_timeout_sec).until(
+                        EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout'))
+                    )
+                    target_price = price_container.find_element(
+                        AppiumBy.ANDROID_UIAUTOMATOR,
+                        f'new UiSelector().className("android.widget.FrameLayout").index({self.config.price_index}).clickable(true)'
+                    )
+                    self.driver.execute_script('mobile: clickGesture', {'elementId': target_price.id})
+                except Exception as e2:
+                    print(f"票价兜底也失败: {e2}")
+                    return False
 
             # 4. 数量选择
             print("选择数量...")
@@ -218,7 +252,7 @@ class DamaiBot:
                                 "y": y,
                                 "duration": 50
                             })
-                            time.sleep(0.02)
+                            time.sleep(self.config.quantity_click_delay_sec)
                     except Exception as e:
                         print(f"快速点击加号失败: {e}")
 
@@ -234,19 +268,23 @@ class DamaiBot:
 
             # 6. 批量选择用户
             print("选择用户...")
-            user_clicks = [(AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{user}")') for user in
-                           self.config.users]
-            # self.batch_click(user_clicks, delay=0.05)  # 极短延迟
-            self.ultra_batch_click(user_clicks)
+            selected_count = self.ultra_batch_click(self.config.users)
+            expected_count = len(self.config.users)
+            if selected_count != expected_count:
+                print(f"用户选择校验失败：期望 {expected_count}，实际 {selected_count}，本次判定失败")
+                return False
 
-            # 7. 提交订单
-            print("提交订单...")
-            submit_selectors = [
-                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("立即提交")'),
-                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*提交.*|.*确认.*")'),
-                (By.XPATH, '//*[contains(@text,"提交")]')
-            ]
-            self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:])
+            # 7. 提交订单（可配置）
+            if self.config.if_commit_order:
+                print("提交订单...")
+                submit_selectors = [
+                    (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("立即提交")'),
+                    (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*提交.*|.*确认.*")'),
+                    (By.XPATH, '//*[contains(@text,"提交")]')
+                ]
+                self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:])
+            else:
+                print("if_commit_order=false，跳过提交订单")
 
             end_time = time.time()
             print(f"抢票流程完成，耗时: {end_time - start_time:.2f}秒")
@@ -256,33 +294,39 @@ class DamaiBot:
             print(f"抢票过程发生错误: {e}")
             return False
         finally:
-            time.sleep(1)  # 给最后的操作一点时间
-            self.driver.quit()
+            time.sleep(self.config.post_run_sleep_sec)
 
-    def run_with_retry(self, max_retries=3):
+    def run_with_retry(self, max_retries=None):
         """带重试机制的抢票"""
-        for attempt in range(max_retries):
-            print(f"第 {attempt + 1} 次尝试...")
-            if self.run_ticket_grabbing():
-                print("抢票成功！")
-                return True
-            else:
-                print(f"第 {attempt + 1} 次尝试失败")
-                if attempt < max_retries - 1:
-                    print("2秒后重试...")
-                    time.sleep(2)
-                    # 重新初始化驱动
-                    try:
-                        self.driver.quit()
-                    except:
-                        pass
+        max_retries = self.config.max_retries if max_retries is None else max_retries
+        try:
+            for attempt in range(max_retries):
+                print(f"第 {attempt + 1} 次尝试...")
+
+                # 若 session 已失效，则先重建
+                if not self.driver or not getattr(self.driver, "session_id", None):
                     self._setup_driver()
 
-        print("所有尝试均失败")
-        return False
+                if self.run_ticket_grabbing():
+                    print("抢票成功！")
+                    return True
+                else:
+                    print(f"第 {attempt + 1} 次尝试失败")
+                    if attempt < max_retries - 1:
+                        print(f"{self.config.retry_interval_sec}秒后重试...")
+                        time.sleep(self.config.retry_interval_sec)
+                        if self.config.reinit_driver_on_retry:
+                            # 仅在配置开启时重建 driver（更稳但更慢）
+                            self._safe_quit_driver()
+                            self._setup_driver()
+
+            print("所有尝试均失败")
+            return False
+        finally:
+            self._safe_quit_driver()
 
 
 # 使用示例
 if __name__ == "__main__":
     bot = DamaiBot()
-    bot.run_with_retry(max_retries=3)
+    bot.run_with_retry()

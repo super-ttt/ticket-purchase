@@ -131,7 +131,7 @@ adb devices
 #### 1. 启动Android设备
 ```bash
 # 启动模拟器
-/Users/shengwang/Library/Android/sdk/emulator/emulator -avd YourAVDName
+/Users/taoliang/Library/Android/sdk/emulator/emulator -avd Pixel_3a_API_34_extension_level_7_arm64-v8a
 
 # 或连接真机（需开启USB调试）
 adb devices
@@ -143,8 +143,8 @@ adb devices
 #### 3. 启动Appium服务器
 ```bash
 # 设置环境变量
-export ANDROID_HOME=/Users/shengwang/Library/Android/sdk
-export ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk
+export ANDROID_HOME=/Users/taoliang/Library/Android/sdk
+export ANDROID_SDK_ROOT=/Users/taoliang/Library/Android/sdk
 
 # 启动Appium服务器
 appium --port 4723
@@ -160,7 +160,7 @@ appium --port 4723
 #### 5. 运行抢票脚本
 ```bash
 cd damai_appium
-ANDROID_HOME=/Users/shengwang/Library/Android/sdk ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk python damai_app_v2.py
+ANDROID_HOME=/Users/taoliang/Library/Android/sdk ANDROID_SDK_ROOT=/Users/taoliang/Library/Android/sdk python damai_app_v2.py
 ```
 
 ### Web端抢票

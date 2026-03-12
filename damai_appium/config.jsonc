@@ -1,13 +1,31 @@
 {
   "server_url": "http://127.0.0.1:4723",
-  "keyword": "周深",
+  "keyword": "张杰",
   "users": [
-    "王胜",
-    "潘鸿运"
+    "梁涛",
+    "徐鑫芳"
   ],
-  "city": "深圳",
-  "date": "12.06",
-  "price": "内场1199元",
+  "city": "北京",
+  "date": "04.19",
+  "price": "东西680元",
   "price_index": 5,
-  "if_commit_order": true
+  "if_commit_order": true,
+
+  "max_retries": 5000,
+  "retry_interval_sec": 0.1,
+  "reinit_driver_on_retry": false,
+
+  "default_wait_sec": 0.35,
+  "fast_click_timeout_sec": 0.3,
+  "smart_click_timeout_sec": 0.3,
+  "user_find_timeout_sec": 0.8,
+  "user_fuzzy_timeout_sec": 0.4,
+
+  "skip_city_selection": true,
+  "price_fast_timeout_sec": 0.25,
+  "price_fallback_timeout_sec": 0.8,
+
+  "batch_click_delay_sec": 0.01,
+  "quantity_click_delay_sec": 0.01,
+  "post_run_sleep_sec": 0.15
 }

@@ -49,10 +49,10 @@ fi
 # 检查Android SDK
 echo ""
 echo "📱 检查Android SDK..."
-if [ -d "/Users/shengwang/Library/Android/sdk" ]; then
+if [ -d "/Users/taoliang/Library/Android/sdk" ]; then
     echo "✅ Android SDK路径存在"
-    export ANDROID_HOME=/Users/shengwang/Library/Android/sdk
-    export ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk
+    export ANDROID_HOME=/Users/taoliang/Library/Android/sdk
+    export ANDROID_SDK_ROOT=/Users/taoliang/Library/Android/sdk
 else
     echo "❌ Android SDK路径不存在"
     echo "   请安装Android Studio并配置SDK"

@@ -7,6 +7,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 
+def click_element_center(driver, el, duration_ms):
+    """点击元素中心，使用 mobile: clickGesture"""
+    rect = el.rect
+    x = rect["x"] + rect["width"] // 2
+    y = rect["y"] + rect["height"] // 2
+    driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": duration_ms})
+
+
 def ultra_fast_click(driver, config, by, value, timeout=None):
     """超快速点击"""
     timeout = config.fast_click_timeout_sec if timeout is None else timeout
@@ -14,10 +22,7 @@ def ultra_fast_click(driver, config, by, value, timeout=None):
         el = WebDriverWait(driver, timeout).until(
             EC.presence_of_element_located((by, value))
         )
-        rect = el.rect
-        x = rect['x'] + rect['width'] // 2
-        y = rect['y'] + rect['height'] // 2
-        driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 50})
+        click_element_center(driver, el, config.click_gesture_duration_ms)
         return True
     except TimeoutException:
         return False
@@ -35,10 +40,7 @@ def smart_wait_and_click(driver, config, by, value, backup_selectors=None, timeo
             el = WebDriverWait(driver, timeout).until(
                 EC.presence_of_element_located((selector_by, selector_value))
             )
-            rect = el.rect
-            x = rect['x'] + rect['width'] // 2
-            y = rect['y'] + rect['height'] // 2
-            driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 50})
+            click_element_center(driver, el, config.click_gesture_duration_ms)
             return True
         except TimeoutException:
             continue
@@ -76,26 +78,30 @@ def find_price_container(driver):
     return None
 
 
-def get_element_full_text(el):
-    """获取元素及其后代的 text + content-desc 拼接"""
-    parts = []
+def get_element_full_text(el, soldout_keywords=("缺货登记", "缺货", "售罄", "无票", "不可选")):
+    """获取元素及其后代的 text + content-desc 拼接，优先快速路径"""
     try:
-        parts.append(el.text or "")
-        parts.append(el.get_attribute("content-desc") or "")
+        t = (el.text or "").strip()
+        d = (el.get_attribute("content-desc") or "").strip()
+        top = f"{t} {d}".strip()
+        if top and any(kw in top for kw in soldout_keywords):
+            return top
+        parts = [t, d]
         for child in el.find_elements(By.XPATH, ".//*"):
             try:
                 parts.append(child.text or "")
                 parts.append(child.get_attribute("content-desc") or "")
             except Exception:
                 pass
+        return " ".join(p for p in parts if p)
     except Exception:
-        pass
-    return " ".join(p for p in parts if p)
+        return ""
 
 
-def get_price_option_elements(driver):
-    """获取票价选项元素列表（可点击的每行）"""
-    container = find_price_container(driver)
+def get_price_option_elements(driver, container=None):
+    """获取票价选项元素列表（可点击的每行），container 可选以复用已查到的容器"""
+    if container is None:
+        container = find_price_container(driver)
     if not container:
         return []
 

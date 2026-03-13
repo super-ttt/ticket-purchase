@@ -8,11 +8,11 @@ from selenium.webdriver.common.by import By
 
 from config import Config
 from damai_app_driver import setup_driver, safe_quit_driver
-from damai_app_utils import ultra_fast_click
+from damai_app_utils import smart_wait_and_click
 from damai_app_flow import (
     poll_until_booking_clickable,
     select_date_if_needed,
-    select_price_by_indices,
+    select_price_with_soldout_poll,
     go_back_after_price_miss,
     submit_order_with_fallback,
 )
@@ -59,24 +59,24 @@ class DamaiBot:
 
             t3 = time.time()
             print("选择票价...")
-            if not select_price_by_indices(self.driver, self.config):
-                print(f"[流程] 选择票价: 失败，耗时 {time.time() - t3:.3f}s")
+            if not select_price_with_soldout_poll(self.driver, self.config):
+                print(f"[流程] 选择票价: 轮询超时仍无票，耗时 {time.time() - t3:.3f}s")
                 go_back_after_price_miss(self.driver, self.config)
                 return False
             print(f"[流程] 选择票价: 耗时 {time.time() - t3:.3f}s")
 
             t4 = time.time()
             print("确定购买...")
-            if not ultra_fast_click(self.driver, self.config, By.ID, "btn_buy_view"):
-                if not ultra_fast_click(
-                    self.driver,
-                    self.config,
-                    AppiumBy.ANDROID_UIAUTOMATOR,
-                    'new UiSelector().textMatches(".*确定.*|.*购买.*")',
-                ):
-                    print(f"[流程] 确定购买: 失败，耗时 {time.time() - t4:.3f}s")
-                    return False
-            time.sleep(0.15)
+            buy_selectors = [
+                (By.ID, "btn_buy_view"),
+                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*确定.*|.*购买.*")'),
+            ]
+            if not smart_wait_and_click(
+                self.driver, self.config, *buy_selectors[0], buy_selectors[1:], timeout=self.config.confirm_buy_timeout_sec
+            ):
+                print(f"[流程] 确定购买: 失败，耗时 {time.time() - t4:.3f}s")
+                return False
+            time.sleep(self.config.confirm_buy_wait_sec)
             print(f"[流程] 确定购买: 耗时 {time.time() - t4:.3f}s")
 
             if self.config.if_commit_order:

@@ -16,10 +16,15 @@ def click_element_center(driver, el, duration_ms):
 
 
 def ultra_fast_click(driver, config, by, value, timeout=None):
-    """超快速点击"""
+    """超快速点击。先 find_elements 快速路径，未找到再 WebDriverWait"""
     timeout = config.fast_click_timeout_sec if timeout is None else timeout
+    poll_frequency = config.smart_click_poll_frequency_sec
+    els = driver.find_elements(by, value)
+    if els:
+        click_element_center(driver, els[0], config.click_gesture_duration_ms)
+        return True
     try:
-        el = WebDriverWait(driver, timeout).until(
+        el = WebDriverWait(driver, timeout, poll_frequency=poll_frequency).until(
             EC.presence_of_element_located((by, value))
         )
         click_element_center(driver, el, config.click_gesture_duration_ms)
@@ -29,15 +34,21 @@ def ultra_fast_click(driver, config, by, value, timeout=None):
 
 
 def smart_wait_and_click(driver, config, by, value, backup_selectors=None, timeout=None):
-    """智能等待和点击 - 支持备用选择器"""
+    """智能等待和点击 - 支持备用选择器。先快速 find_elements，未找到再 WebDriverWait 轮询"""
     timeout = config.smart_click_timeout_sec if timeout is None else timeout
+    poll_frequency = config.smart_click_poll_frequency_sec
     selectors = [(by, value)]
     if backup_selectors:
         selectors.extend(backup_selectors)
 
     for selector_by, selector_value in selectors:
+        els = driver.find_elements(selector_by, selector_value)
+        if els:
+            click_element_center(driver, els[0], config.click_gesture_duration_ms)
+            return True
+
         try:
-            el = WebDriverWait(driver, timeout).until(
+            el = WebDriverWait(driver, timeout, poll_frequency=poll_frequency).until(
                 EC.presence_of_element_located((selector_by, selector_value))
             )
             click_element_center(driver, el, config.click_gesture_duration_ms)

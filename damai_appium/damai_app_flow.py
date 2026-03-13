@@ -53,21 +53,26 @@ def poll_until_booking_clickable(driver, config):
 
 def select_date_if_needed(driver, config):
     """可选场次选择"""
+    t0 = time.time()
     date_conf = config.date
     if not date_conf:
+        print(f"[场次] 跳过（无 date 配置），耗时 {time.time() - t0:.3f}s")
         return True
 
     date_list = date_conf if isinstance(date_conf, list) else [str(date_conf)]
+    print(f"[场次] 参数解析: date_list={date_list}，耗时 {time.time() - t0:.3f}s")
+
     for d in date_list:
+        ti = time.time()
         selectors = [
             (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{d}")'),
             (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().textContains("{d}")'),
             (By.XPATH, f'//*[contains(@text,"{d}")]')
         ]
         if smart_wait_and_click(driver, config, *selectors[0], selectors[1:], timeout=config.date_select_timeout_sec):
-            print(f"场次选择成功: {d}")
+            print(f"[场次] 选择成功: {d}，耗时 {time.time() - ti:.3f}s，总耗时 {time.time() - t0:.3f}s")
             return True
-    print(f"未匹配到场次: {date_list}")
+    print(f"[场次] 未匹配到场次: {date_list}，总耗时 {time.time() - t0:.3f}s")
     return False
 
 

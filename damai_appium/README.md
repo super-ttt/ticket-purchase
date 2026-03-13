@@ -45,6 +45,7 @@
 | `default_wait_sec` | number | WebDriver 默认等待超时（秒） |
 | `fast_click_timeout_sec` | number | 快速点击（如确定购买）的等待超时 |
 | `smart_click_timeout_sec` | number | 智能点击（多选择器兜底）的等待超时 |
+| `smart_click_poll_frequency_sec` | number | WebDriverWait 轮询间隔（秒），默认 0.02，越小检测越快 |
 | `user_find_timeout_sec` | number | 用户选择相关超时（当前流程未使用） |
 | `user_fuzzy_timeout_sec` | number | 用户模糊匹配超时（当前流程未使用） |
 

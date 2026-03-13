@@ -7,7 +7,7 @@ from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 
 from config import Config
 
@@ -97,57 +97,6 @@ class DamaiBot:
             return True
         except TimeoutException:
             return False
-
-    def batch_click(self, elements_info, delay=0.1):
-        """批量点击操作"""
-        for by, value in elements_info:
-            if self.ultra_fast_click(by, value):
-                if delay > 0:
-                    time.sleep(delay)
-            else:
-                print(f"点击失败: {value}")
-
-    def ultra_batch_click(self, users, timeout=None):
-        """批量选择用户：仅当前页面匹配（不滚动）；返回成功选中人数"""
-        timeout = self.config.user_find_timeout_sec if timeout is None else timeout
-        selected = 0
-
-        for user in users:
-            el = None
-            exact_selector = f'new UiSelector().text("{user}")'
-            fuzzy_selector = f'new UiSelector().textContains("{user}")'
-
-            # 1) 先尝试精确匹配
-            try:
-                el = WebDriverWait(self.driver, timeout).until(
-                    EC.presence_of_element_located((AppiumBy.ANDROID_UIAUTOMATOR, exact_selector))
-                )
-            except TimeoutException:
-                # 2) 再尝试模糊匹配
-                try:
-                    el = WebDriverWait(self.driver, self.config.user_fuzzy_timeout_sec).until(
-                        EC.presence_of_element_located((AppiumBy.ANDROID_UIAUTOMATOR, fuzzy_selector))
-                    )
-                except TimeoutException:
-                    pass
-
-            if el is None:
-                print(f"超时未找到用户: {user}")
-                continue
-
-            try:
-                rect = el.rect
-                x = rect['x'] + rect['width'] // 2
-                y = rect['y'] + rect['height'] // 2
-                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 30})
-                selected += 1
-                print(f"点击用户: {user}")
-                time.sleep(self.config.batch_click_delay_sec)
-            except Exception as e:
-                print(f"点击用户失败 {user}: {e}")
-
-        print(f"成功选中 {selected}/{len(users)} 个用户")
-        return selected
 
     def smart_wait_and_click(self, by, value, backup_selectors=None, timeout=None):
         """智能等待和点击 - 支持备用选择器"""

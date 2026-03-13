@@ -3,6 +3,7 @@
 import time
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 
 from damai_app_utils import (
     any_text_exists,
@@ -90,15 +91,17 @@ def select_price_by_indices(driver, config):
     print(f"[票价] 参数解析: indices={indices}，耗时 {time.time() - t0:.3f}s")
 
     t1 = time.time()
-    wait_sec = config.price_candidate_wait_sec
-    deadline = time.time() + wait_sec
-    container = None
 
-    while time.time() < deadline:
-        container = find_price_container(driver)
-        if container is not None:
-            break
-        time.sleep(config.price_container_poll_interval_sec)
+    def _container_ready(d):
+        return find_price_container(d)
+
+    try:
+        container = WebDriverWait(
+            driver, config.price_candidate_wait_sec,
+            poll_frequency=config.price_container_poll_interval_sec
+        ).until(_container_ready)
+    except Exception:
+        container = None
 
     elapsed = time.time() - t1
     if not container:
@@ -233,18 +236,19 @@ def submit_order_with_fallback(driver, config):
     modal_retry_max = config.order_modal_retry_max
 
     for _ in range(modal_retry_max):
-        modal = handle_order_submit_modal(driver, config)
-        if modal == "back":
-            return False
-        if modal == "retry":
-            time.sleep(wait_sec)
-
         result = _try_submit_and_check_modal(driver, config, submit_selectors, wait_sec)
         if result is True:
             return True
         if result is False:
             return False
         if result == "retry":
+            continue
+
+        modal = handle_order_submit_modal(driver, config)
+        if modal == "back":
+            return False
+        if modal == "retry":
+            time.sleep(wait_sec)
             continue
 
         try:

@@ -7,6 +7,6 @@
   ],
   "city": "深圳",
   "date": "12.06",
-  "price": "看台799元",
+  "price_indices": [0, 1],
   "if_commit_order": false
 }

@@ -29,14 +29,7 @@ echo "✅ 配置文件存在"
 echo "📋 当前配置:"
 echo "   $(cat damai_appium/config.jsonc | grep -E '"keyword"|"city"|"users"' | head -3)"
 
-# 确认是否继续
-read -p "🤔 确认开始抢票？(y/N): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ 已取消"
-    exit 1
-fi
-
+# 开始抢票
 # 进入脚本目录
 cd damai_appium
 

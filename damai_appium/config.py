@@ -9,7 +9,7 @@ import json
 
 
 class Config:
-    def __init__(self, server_url, keyword, users, city, date, price, price_index, if_commit_order,
+    def __init__(self, server_url, keyword, users, city, date, price_indices, if_commit_order,
                  max_retries=3,
                  retry_interval_sec=0.1,
                  reinit_driver_on_retry=False,
@@ -23,14 +23,15 @@ class Config:
                  post_run_sleep_sec=0.2,
                  skip_city_selection=False,
                  price_fast_timeout_sec=0.25,
-                 price_fallback_timeout_sec=0.8):
+                 price_fallback_timeout_sec=0.8,
+                 order_modal_retry_max=10,
+                 order_modal_retry_wait_sec=0.1):
         self.server_url = server_url
         self.keyword = keyword
         self.users = users
         self.city = city
         self.date = date
-        self.price = price
-        self.price_index = price_index
+        self.price_indices = price_indices
         self.if_commit_order = if_commit_order
 
         # 重试与节奏配置
@@ -50,6 +51,9 @@ class Config:
         self.skip_city_selection = skip_city_selection
         self.price_fast_timeout_sec = price_fast_timeout_sec
         self.price_fallback_timeout_sec = price_fallback_timeout_sec
+        # 提交订单遇「同一时间下单人数过多」弹窗时：order_modal_retry_max=最大重试次数；order_modal_retry_wait_sec=点击「继续尝试」后等待秒数再尝试提交
+        self.order_modal_retry_max = order_modal_retry_max
+        self.order_modal_retry_wait_sec = order_modal_retry_wait_sec
 
     @staticmethod
     def load_config():
@@ -62,8 +66,7 @@ class Config:
             config['users'],
             config['city'],
             config['date'],
-            config['price'],
-            config['price_index'],
+            config.get('price_indices', []) if 'price_indices' in config else ([config['price_index']] if 'price_index' in config else []),
             config['if_commit_order'],
             config.get('max_retries', 3),
             config.get('retry_interval_sec', 0.1),
@@ -79,4 +82,6 @@ class Config:
             config.get('skip_city_selection', False),
             config.get('price_fast_timeout_sec', 0.25),
             config.get('price_fallback_timeout_sec', 0.8),
+            config.get('order_modal_retry_max', 10),
+            config.get('order_modal_retry_wait_sec', 0.1),
         )

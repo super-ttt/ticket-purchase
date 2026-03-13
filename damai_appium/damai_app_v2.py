@@ -1,11 +1,4 @@
 # -*- coding: UTF-8 -*-
-"""
-__Author__ = "BlueCestbon"
-__Version__ = "2.0.0"
-__Description__ = "大麦app抢票自动化 - 优化版"
-__Created__ = 2025/09/13 19:27
-"""
-
 import os
 import time
 from appium import webdriver
@@ -177,112 +170,391 @@ class DamaiBot:
                 continue
         return False
 
+    def _any_text_exists(self, patterns):
+        """页面上是否存在任意匹配文案"""
+        for p in patterns:
+            selector = f'new UiSelector().textContains("{p}")'
+            if self.driver.find_elements(AppiumBy.ANDROID_UIAUTOMATOR, selector):
+                return True
+        return False
+
+    def _try_click_booking_entry(self):
+        """尝试点击预约/购买入口，返回状态: booked|no_start|listen|none"""
+        if self._any_text_exists(["提交缺货登记"]):
+            return "no_start"
+        book_selectors = [
+            (By.ID, "cn.damai:id/trade_project_detail_purchase_status_bar_container_fl"),
+            (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*预约.*|.*购买.*|.*立即.*")'),
+            (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*不，立即预订.*|.*不，立即购买.*")'),
+            (By.XPATH, '//*[contains(@text,"预约") or contains(@text,"购买") or contains(@text,"立即")]')
+        ]
+        if self.smart_wait_and_click(*book_selectors[0], book_selectors[1:], timeout=0.25):
+            return "booked"
+        return "none"
+
+    def _poll_until_booking_clickable(self):
+        """短轮询：等待抢票开始并点击入口"""
+        poll_timeout_sec = getattr(self.config, "book_poll_timeout_sec", 8)
+        poll_interval_sec = getattr(self.config, "book_poll_interval_sec", 0.05)
+        deadline = time.time() + max(1, poll_timeout_sec)
+
+        while time.time() < deadline:
+            state = self._try_click_booking_entry()
+            if state == "booked":
+                return True
+            if state == "listen":
+                return True
+            if state == "no_start":
+                print("当前为提交缺货登记状态，等待开售...")
+            time.sleep(max(0.05, poll_interval_sec))
+            try:
+                self.driver.refresh()
+            except Exception:
+                pass
+
+        return False
+
+    def _select_date_if_needed(self):
+        """可选场次选择（兼容 date 为字符串或列表）"""
+        date_conf = getattr(self.config, "date", None)
+        if not date_conf:
+            return True
+
+        date_list = date_conf if isinstance(date_conf, list) else [str(date_conf)]
+        for d in date_list:
+            selectors = [
+                (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{d}")'),
+                (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().textContains("{d}")'),
+                (By.XPATH, f'//*[contains(@text,"{d}")]')
+            ]
+            if self.smart_wait_and_click(*selectors[0], selectors[1:], timeout=0.3):
+                print(f"场次选择成功: {d}")
+                return True
+        print(f"未匹配到场次: {date_list}")
+        return False
+
+    def _handle_order_submit_modal(self):
+        """处理「同一时间下单人数过多」弹窗：优先点击「继续尝试」，否则点击「返回重新选购」
+
+        Returns:
+            "retry": 已点击「继续尝试」，可重试提交
+            "back": 已点击「返回重新选购」，本轮失败
+            None: 未检测到弹窗
+        """
+        try:
+            # 优先查找「继续尝试」
+            for by, val in [
+                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("继续尝试")'),
+                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textContains("继续尝试")'),
+                (By.XPATH, '//*[contains(@text,"继续尝试")]'),
+            ]:
+                els = self.driver.find_elements(by, val)
+                if els:
+                    try:
+                        el = els[0]
+                        rect = el.rect
+                        x = rect["x"] + rect["width"] // 2
+                        y = rect["y"] + rect["height"] // 2
+                        self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 50})
+                        print("已点击「继续尝试」，重试提交")
+                        return "retry"
+                    except Exception:
+                        continue
+
+            # 无「继续尝试」时查找「返回重新选购」
+            for by, val in [
+                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("返回重新选购")'),
+                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textContains("返回重新选购")'),
+                (By.XPATH, '//*[contains(@text,"返回重新选购")]'),
+            ]:
+                els = self.driver.find_elements(by, val)
+                if els:
+                    try:
+                        el = els[0]
+                        rect = el.rect
+                        x = rect["x"] + rect["width"] // 2
+                        y = rect["y"] + rect["height"] // 2
+                        self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 50})
+                        print("已点击「返回重新选购」")
+                        return "back"
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return None
+
+    def _submit_order_with_fallback(self):
+        """提交订单，多选择器兜底；遇「同一时间下单人数过多」弹窗时自动处理"""
+        submit_selectors = [
+            (By.ID, "btn_submit"),
+            (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("立即提交")'),
+            (AppiumBy.ANDROID_UIAUTOMATOR,
+             'new UiSelector().textMatches(".*提交订单.*|.*立即提交.*|.*提交.*|.*确认.*|.*去支付.*|.*支付.*")'),
+            (By.XPATH, '//*[contains(@text,"提交") or contains(@text,"确认") or contains(@text,"支付")]')
+        ]
+
+        wait_sec = getattr(self.config, "order_modal_retry_wait_sec", 0.1)
+        modal_retry_max = getattr(self.config, "order_modal_retry_max", 10)
+        for _ in range(modal_retry_max):
+            # 1. 先检测弹窗
+            modal_result = self._handle_order_submit_modal()
+            if modal_result == "back":
+                return False
+            if modal_result == "retry":
+                time.sleep(wait_sec)
+                # 弹窗已关闭，立即尝试提交订单
+                if self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:], timeout=0.35):
+                    time.sleep(0.15)
+                    modal_result = self._handle_order_submit_modal()
+                    if modal_result == "back":
+                        return False
+                    if modal_result == "retry":
+                        time.sleep(wait_sec)
+                        continue
+                    return True
+                continue
+
+            # 2. 无弹窗，尝试点击提交
+            if self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:], timeout=0.35):
+                time.sleep(0.15)
+                # 提交后可能弹出「人数过多」，再检测一次
+                modal_result = self._handle_order_submit_modal()
+                if modal_result == "back":
+                    return False
+                if modal_result == "retry":
+                    time.sleep(wait_sec)
+                    continue
+                return True
+
+            # 3. 提交按钮未命中，可能被弹窗遮挡，检测弹窗
+            modal_result = self._handle_order_submit_modal()
+            if modal_result == "back":
+                return False
+            if modal_result == "retry":
+                time.sleep(wait_sec)
+                # 弹窗已关闭，立即尝试提交订单
+                if self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:], timeout=0.35):
+                    time.sleep(0.15)
+                    modal_result = self._handle_order_submit_modal()
+                    if modal_result == "back":
+                        return False
+                    if modal_result == "retry":
+                        time.sleep(wait_sec)
+                        continue
+                    return True
+                continue
+
+            # 额外 JS 兜底
+            try:
+                clicked = self.driver.execute_script(
+                    """
+                    const keys=['立即提交','提交订单','提交','确认','去支付','支付'];
+                    const nodes=[...document.querySelectorAll('*')];
+                    for (const n of nodes){
+                        const t=(n.innerText||n.textContent||'').trim();
+                        if (!t) continue;
+                        if (keys.some(k=>t.includes(k))){ n.click(); return true; }
+                    }
+                    return false;
+                    """
+                )
+                if clicked:
+                    time.sleep(0.15)
+                    modal_result = self._handle_order_submit_modal()
+                    if modal_result == "back":
+                        return False
+                    if modal_result == "retry":
+                        time.sleep(wait_sec)
+                        continue
+                    return True
+            except Exception:
+                pass
+            break
+        return False
+
+    def _find_price_container(self):
+        """查找票价容器（支持详情页、确认页等多种布局）。"""
+        container_ids = [
+            'cn.damai:id/project_detail_perform_price_flowlayout',
+            'cn.damai:id/perform_price_flowlayout',
+            'cn.damai:id/price_flowlayout',
+            # 确认页/订单页可能使用的容器
+            'cn.damai:id/project_detail_perform_flowlayout',
+            'cn.damai:id/perform_flowlayout',
+            'cn.damai:id/ll_price_container',
+            'cn.damai:id/rl_price',
+            'cn.damai:id/price_container',
+        ]
+        for cid in container_ids:
+            try:
+                els = self.driver.find_elements(By.ID, cid)
+                if els:
+                    return els[0]
+            except Exception:
+                continue
+        return None
+
+    def _get_element_full_text(self, el):
+        """获取元素及其后代的 text + content-desc 拼接，用于判断缺货等标签"""
+        parts = []
+        try:
+            parts.append(el.text or "")
+            parts.append(el.get_attribute("content-desc") or "")
+            for child in el.find_elements(By.XPATH, ".//*"):
+                try:
+                    parts.append(child.text or "")
+                    parts.append(child.get_attribute("content-desc") or "")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return " ".join(p for p in parts if p)
+
+    def _get_price_option_elements(self):
+        """获取票价选项元素列表（可点击的每行）。"""
+        container = self._find_price_container()
+        if not container:
+            return []
+        element_list = []
+        try:
+            frames = container.find_elements(By.XPATH, ".//*[@clickable='true']")
+            for f in frames:
+                try:
+                    if f.size.get("width", 0) > 30 and f.size.get("height", 0) > 20:
+                        element_list.append(f)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if not element_list:
+            rows = container.find_elements(By.XPATH, ".//*[@resource-id='cn.damai:id/ll_perform_item']")
+            for row in rows:
+                try:
+                    target = row
+                    for xp in ["./ancestor::*[@clickable='true'][1]", "./preceding-sibling::*[@clickable='true'][1]",
+                               "./.."]:
+                        try:
+                            t = row.find_element(By.XPATH, xp)
+                            if t and (t.get_attribute("clickable") == "true" or (t.size.get("width", 0) or 0) > 20):
+                                target = t
+                                break
+                        except Exception:
+                            pass
+                    element_list.append(target)
+                except Exception:
+                    pass
+        return element_list
+
+    def _select_price_by_indices(self):
+        """按索引数组选择票价：依次尝试配置的索引，命中即返回。"""
+        indices = getattr(self.config, "price_indices", None)
+        if not indices:
+            return False
+        if isinstance(indices, int):
+            indices = [indices]
+        indices = [int(i) for i in indices if isinstance(i, (int, float, str)) and str(i).strip() != ""]
+
+        wait_sec = getattr(self.config, "price_candidate_wait_sec", 5)
+        deadline = time.time() + wait_sec
+
+        print("等待票价容器")
+        while time.time() < deadline:
+            if self._find_price_container() is not None:
+                break
+            if self.driver.find_elements(By.XPATH, '//*[contains(@text,"元") or contains(@content-desc,"元")]'):
+                break
+            time.sleep(0.03)
+
+        print("获取票价页面")
+        if not self._find_price_container():
+            print("票价页面未就绪")
+            return False
+
+        print("票价页面已就绪")
+        element_list = self._get_price_option_elements()
+        if not element_list:
+            print("未找到票价选项")
+            return False
+
+        print("票价选项已就绪")
+        soldout_keywords = ("缺货登记", "缺货", "售罄", "无票", "不可选")
+        fail_reasons = []
+        for idx in indices:
+            if idx < 0 or idx >= len(element_list):
+                fail_reasons.append(f"索引{idx}: 越界（共{len(element_list)}个选项）")
+                continue
+            try:
+                el = element_list[idx]
+                full_txt = self._get_element_full_text(el)
+                hit_soldout = [kw for kw in soldout_keywords if kw in full_txt]
+                if hit_soldout:
+                    fail_reasons.append(f"索引{idx}: 缺货/售罄（{', '.join(hit_soldout)}）")
+                    continue
+                rect = el.rect
+                x = rect["x"] + rect["width"] // 2
+                y = rect["y"] + rect["height"] // 2
+                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y, "duration": 25})
+                print(f"票价选择成功（索引 {idx}）")
+                return True
+            except Exception as e:
+                fail_reasons.append(f"索引{idx}: 点击失败（{type(e).__name__}）")
+                continue
+        print(f"所有票价索引均不可用: {'; '.join(fail_reasons)}")
+        return False
+
+    def _go_back_after_price_miss(self):
+        """票价候选全部未命中时，返回上一页，交给外层重试"""
+        try:
+            self.driver.back()
+            time.sleep(0.12)
+            # 某些机型 back 可能没生效，补一次软返回
+            if self._any_text_exists(["票价", "价格", "场次"]):
+                self.driver.execute_script("mobile: pressKey", {"keycode": 4})
+                time.sleep(0.1)
+            print("票价未命中：已返回上一页")
+        except Exception as e:
+            print(f"票价未命中：返回上一页失败: {e}")
+
     def run_ticket_grabbing(self):
         """执行抢票主流程"""
         try:
             print("开始抢票流程...")
             start_time = time.time()
 
-            # 1. 城市选择（可选跳过）
-            if self.config.skip_city_selection:
-                print("选择城市...（已配置跳过）")
-            else:
-                print("选择城市...")
-                city_selectors = [
-                    (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().text("{self.config.city}")'),
-                    (AppiumBy.ANDROID_UIAUTOMATOR, f'new UiSelector().textContains("{self.config.city}")'),
-                    (By.XPATH, f'//*[@text="{self.config.city}"]')
-                ]
-                if not self.smart_wait_and_click(*city_selectors[0], city_selectors[1:]):
-                    print("城市选择失败")
-                    return False
-
-            # 2. 点击预约按钮 - 多种可能的按钮文本
-            print("点击预约按钮...")
-            book_selectors = [
-                (By.ID, "cn.damai:id/trade_project_detail_purchase_status_bar_container_fl"),
-                (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*预约.*|.*购买.*|.*立即.*")'),
-                (By.XPATH, '//*[contains(@text,"预约") or contains(@text,"购买")]')
-            ]
-            if not self.smart_wait_and_click(*book_selectors[0], book_selectors[1:]):
-                print("预约按钮点击失败")
+            # 1. 场次选择（可选）
+            print("选择场次...")
+            if not self._select_date_if_needed():
+                print("场次选择失败")
                 return False
 
-            # 3. 票价选择（优先直点，失败后兜底）
+            # 2. 点击预约按钮（含开售轮询/缺货登记分支）
+            print("等待并点击预约/购买入口...")
+            if not self._poll_until_booking_clickable():
+                print("预约按钮点击失败（轮询超时）")
+                return False
+
+            # 3. 票价选择（按索引）
             print("选择票价...")
-            try:
-                # 极速路径：短超时等待容器，命中后按 index 直点
-                price_container = WebDriverWait(self.driver, self.config.price_fast_timeout_sec).until(
-                    EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout'))
-                )
-                target_price = price_container.find_element(
-                    AppiumBy.ANDROID_UIAUTOMATOR,
-                    f'new UiSelector().className("android.widget.FrameLayout").index({self.config.price_index}).clickable(true)'
-                )
-                self.driver.execute_script('mobile: clickGesture', {'elementId': target_price.id})
-            except Exception as e:
-                print(f"票价直点失败，启动兜底方案: {e}")
-                # 兜底路径：更长等待再重试一次
-                try:
-                    price_container = WebDriverWait(self.driver, self.config.price_fallback_timeout_sec).until(
-                        EC.presence_of_element_located((By.ID, 'cn.damai:id/project_detail_perform_price_flowlayout'))
-                    )
-                    target_price = price_container.find_element(
-                        AppiumBy.ANDROID_UIAUTOMATOR,
-                        f'new UiSelector().className("android.widget.FrameLayout").index({self.config.price_index}).clickable(true)'
-                    )
-                    self.driver.execute_script('mobile: clickGesture', {'elementId': target_price.id})
-                except Exception as e2:
-                    print(f"票价兜底也失败: {e2}")
-                    return False
+            if not self._select_price_by_indices():
+                print("票价索引未命中，本轮失败")
+                self._go_back_after_price_miss()
+                return False
 
-            # 4. 数量选择
-            print("选择数量...")
-            if self.driver.find_elements(by=By.ID, value='layout_num'):
-                clicks_needed = len(self.config.users) - 1
-                if clicks_needed > 0:
-                    try:
-                        plus_button = self.driver.find_element(By.ID, 'img_jia')
-                        for i in range(clicks_needed):
-                            rect = plus_button.rect
-                            x = rect['x'] + rect['width'] // 2
-                            y = rect['y'] + rect['height'] // 2
-                            self.driver.execute_script("mobile: clickGesture", {
-                                "x": x,
-                                "y": y,
-                                "duration": 50
-                            })
-                            time.sleep(self.config.quantity_click_delay_sec)
-                    except Exception as e:
-                        print(f"快速点击加号失败: {e}")
-
-            # if self.driver.find_elements(by=By.ID, value='layout_num') and self.config.users is not None:
-            #     for i in range(len(self.config.users) - 1):
-            #         self.driver.find_element(by=By.ID, value='img_jia').click()
-
-            # 5. 确定购买
+            # 4. 确定购买
             print("确定购买...")
             if not self.ultra_fast_click(By.ID, "btn_buy_view"):
-                # 备用按钮文本
-                self.ultra_fast_click(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*确定.*|.*购买.*")')
+                if not self.ultra_fast_click(AppiumBy.ANDROID_UIAUTOMATOR,
+                                             'new UiSelector().textMatches(".*确定.*|.*购买.*")'):
+                    print("确定购买按钮未命中，本轮失败")
+                    return False
+            time.sleep(0.15)
 
-            # 6. 批量选择用户
-            print("选择用户...")
-            selected_count = self.ultra_batch_click(self.config.users)
-            expected_count = len(self.config.users)
-            if selected_count != expected_count:
-                print(f"用户选择校验失败：期望 {expected_count}，实际 {selected_count}，本次判定失败")
-                return False
-
-            # 7. 提交订单（可配置）
+            # 5. 提交订单（可配置）
             if self.config.if_commit_order:
                 print("提交订单...")
-                submit_selectors = [
-                    (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text("立即提交")'),
-                    (AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches(".*提交.*|.*确认.*")'),
-                    (By.XPATH, '//*[contains(@text,"提交")]')
-                ]
-                self.smart_wait_and_click(*submit_selectors[0], submit_selectors[1:])
+                if not self._submit_order_with_fallback():
+                    print("提交按钮未命中，请手动确认")
+                    return False
             else:
                 print("if_commit_order=false，跳过提交订单")
 

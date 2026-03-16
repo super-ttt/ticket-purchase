@@ -1,10 +1,5 @@
 # -*- coding: UTF-8 -*-
-"""
-__Author__ = "WECENG"
-__Version__ = "1.0.0"
-__Description__ = "配置类"
-__Created__ = 2023/10/27 09:54
-"""
+"""配置类"""
 import json
 
 

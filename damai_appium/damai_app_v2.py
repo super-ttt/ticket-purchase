@@ -44,18 +44,18 @@ class DamaiBot:
             start_time = time.time()
 
             t1 = time.time()
-            print("选择场次...")
-            if not select_date_if_needed(self.driver, self.config):
-                print(f"[流程] 选择场次: 失败，耗时 {time.time() - t1:.3f}s")
-                return False
-            print(f"[流程] 选择场次: 耗时 {time.time() - t1:.3f}s")
-
-            t2 = time.time()
             print("等待并点击预约/购买入口...")
             if not poll_until_booking_clickable(self.driver, self.config):
-                print(f"[流程] 预约/购买入口: 失败（轮询超时），耗时 {time.time() - t2:.3f}s")
+                print(f"[流程] 预约/购买入口: 失败（轮询超时），耗时 {time.time() - t1:.3f}s")
                 return False
-            print(f"[流程] 预约/购买入口: 耗时 {time.time() - t2:.3f}s")
+            print(f"[流程] 预约/购买入口: 耗时 {time.time() - t1:.3f}s")
+
+            t2 = time.time()
+            print("选择场次...")
+            if not select_date_if_needed(self.driver, self.config):
+                print(f"[流程] 选择场次: 失败，耗时 {time.time() - t2:.3f}s")
+                return False
+            print(f"[流程] 选择场次: 耗时 {time.time() - t2:.3f}s")
 
             t3 = time.time()
             print("选择票价...")
